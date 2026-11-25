@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "intellidump"
+version = "0.1.0"
+description = "pg_dump-style INSERT export driven by a SELECT query that recursively follows foreign keys."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Dasha" }]
+keywords = ["postgresql", "postgres", "pg_dump", "export", "foreign-key", "subset"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: SQL",
+    "Topic :: Database",
+    "Topic :: Utilities",
+]
+dependencies = [
+    # psycopg 3 with the bundled libpq, so no local PostgreSQL client install is needed.
+    "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+intellidump = "intellidump.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dashasierra/intellidump"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/intellidump"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/intellidump", "tests", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "integration: needs a live PostgreSQL server (set INTELLIDUMP_TEST_DSN)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "D"]
+
+[tool.ruff.lint.pydocstyle]
+# Short summary line, then Args: / Returns: (or Yields:) sections.
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Docstring rules apply to the package, not the tests.
+"tests/*" = ["D"]
+# Long lines inside the embedded SQL fixtures.
+"tests/test_integration.py" = ["D", "E501"]
+"tests/test_roundtrip.py" = ["D", "E501"]
+"tests/test_fuzz.py" = ["D", "E501"]
+"tests/rt.py" = ["D", "E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/intellidump"]
