@@ -42,8 +42,13 @@ psql -h staging -d app -f last_week.sql
 
 ## Installation
 
-Requires Python 3.10+ and PostgreSQL 12+ on the server. psycopg 3 ships its own libpq, so no
+Requires Python 3.10+ and PostgreSQL 11+ on the server. psycopg 3 ships its own libpq, so no
 PostgreSQL client install is needed.
+
+A dump from an older server imports into a newer one, which makes intellidump usable for moving
+data off a PostgreSQL 11 server. On 11, floating-point values are written with 17 significant
+digits (`0.1` comes out as `0.100000000000000006`) rather than the shortest exact form newer
+servers use; they read back as exactly the same values.
 
 ```
 pip install .            # or: pip install -e ".[dev]" for development
@@ -268,6 +273,10 @@ and the `hstore`/`citext` extensions (a throwaway superuser is simplest):
 docker run -d --rm --name idump-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:17
 INTELLIDUMP_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:55432/postgres pytest
 ```
+
+They run on any supported server version. On older servers, test data a version can't hold
+(generated columns before 12, numeric infinities and multiranges before 14) is left out
+automatically; run them against `postgres:11` as well as a current version before a release.
 
 What they cover:
 

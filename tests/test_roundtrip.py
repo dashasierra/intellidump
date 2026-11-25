@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+import rt
 from rt import needs_db
 
 pytestmark = [pytest.mark.integration, needs_db]
@@ -26,8 +27,6 @@ TYPES: list[tuple[str, str, list[str]]] = [
             "-0.000",
             "1.50",
             "'NaN'",
-            "'Infinity'",
-            "'-Infinity'",
             "123456789012345678901234567890.123456789012345678901234567890",
             "0.000000000000000000000000000000000000001",
             "-1e-130",
@@ -174,7 +173,6 @@ TYPES: list[tuple[str, str, list[str]]] = [
     ("int4range", "int4range", ["'[1,5)'", "'empty'", "'(,)'", "'[3,]'"]),
     ("numrange", "numrange", ["'[1.5,2.50]'", "'(,0)'"]),
     ("tstzrange", "tstzrange", ["'[2026-01-01 00:00+00,infinity)'"]),
-    ("multirange", "int4multirange", ["'{[1,3), [5,7)}'", "'{}'"]),
     (
         "int_array",
         "integer[]",
@@ -197,6 +195,10 @@ TYPES: list[tuple[str, str, list[str]]] = [
     ("domain", "nonempty", ["'ok'", "'with space'"]),
     ("domain_array", "nonempty[]", ["ARRAY['a'::nonempty]"]),
 ]
+if rt.DSN and rt.server_version() >= 140000:
+    # Multiranges and numeric infinities came with PostgreSQL 14.
+    TYPES.append(("multirange", "int4multirange", ["'{[1,3), [5,7)}'", "'{}'"]))
+    next(v for name, _, v in TYPES if name == "numeric").extend(["'Infinity'", "'-Infinity'"])
 
 TYPES_DDL = """
 CREATE TYPE mood AS ENUM ('ok', 'it''s "odd"', 'ünïcode');
@@ -443,6 +445,16 @@ INSERT INTO wide (id, root_id, c0, c199) VALUES (1, 1, 0, 199), (2, 2, NULL, NUL
 """
 
 
+def _struct_ddl() -> str:
+    """STRUCT_DDL, without the generated column before PostgreSQL 12."""
+    if rt.server_version() >= 120000:
+        return STRUCT_DDL
+    # PostgreSQL 11 also can't reference a partitioned table.
+    return STRUCT_DDL.replace(",\n    doubled int GENERATED ALWAYS AS (id * 2) STORED", "").replace(
+        ", FOREIGN KEY (pid, pat) REFERENCES part)", ")"
+    )
+
+
 @pytest.mark.parametrize(
     "opts",
     [
@@ -454,12 +466,12 @@ INSERT INTO wide (id, root_id, c0, c199) VALUES (1, 1, 0, 199), (2, 2, NULL, NUL
     ids=["default", "multi-row+conflict+tx", "tiny-batches", "no-children"],
 )
 def test_structural_edge_cases(env, opts):
-    env.setup(STRUCT_DDL, STRUCT_DATA)
+    env.setup(_struct_ddl(), STRUCT_DATA)
     env.roundtrip("rt.root", "id = 1", **opts)
 
 
 def test_structural_edge_cases_all_rows(env):
-    env.setup(STRUCT_DDL, STRUCT_DATA)
+    env.setup(_struct_ddl(), STRUCT_DATA)
     env.roundtrip("rt.root", "true", rows_per_insert=3)
 
 

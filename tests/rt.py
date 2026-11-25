@@ -16,6 +16,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,34 @@ COMPARE_SETTINGS = (
 )
 
 
+_server_version: int | None = None
+
+
+def server_version() -> int:
+    """The test server's version number, e.g. 110022 or 170004."""
+    global _server_version
+    if _server_version is None:
+        with psycopg.connect(DSN) as conn:
+            _server_version = conn.info.server_version
+    return _server_version
+
+
+def _drop_database(admin: psycopg.Connection[Any], name: str) -> None:
+    """DROP DATABASE ... WITH (FORCE), which needs PostgreSQL 13, done by hand."""
+    admin.execute(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        "WHERE datname = %s AND pid <> pg_backend_pid()",
+        (name,),
+    )
+    for _ in range(100):
+        try:
+            admin.execute(f"DROP DATABASE IF EXISTS {name}")
+            return
+        except psycopg.errors.ObjectInUse:
+            time.sleep(0.1)
+    admin.execute(f"DROP DATABASE IF EXISTS {name}")
+
+
 def target_dsn() -> str:
     assert DSN
     return make_conninfo(DSN, dbname=TARGET_DB)
@@ -47,13 +76,13 @@ def target_dsn() -> str:
 
 def create_target_database() -> None:
     with psycopg.connect(DSN, autocommit=True) as admin:
-        admin.execute(f"DROP DATABASE IF EXISTS {TARGET_DB} WITH (FORCE)")
+        _drop_database(admin, TARGET_DB)
         admin.execute(f"CREATE DATABASE {TARGET_DB}")
 
 
 def drop_target_database() -> None:
     with psycopg.connect(DSN, autocommit=True) as admin:
-        admin.execute(f"DROP DATABASE IF EXISTS {TARGET_DB} WITH (FORCE)")
+        _drop_database(admin, TARGET_DB)
 
 
 @dataclass
@@ -287,7 +316,15 @@ class Env:
 def terminate(pid: int) -> None:
     """Kill a backend, as a server crash, failover or admin would, and wait for it."""
     with psycopg.connect(DSN, autocommit=True) as admin:
-        admin.execute("SELECT pg_terminate_backend(%s, 10000)", (pid,))
+        # pg_terminate_backend(pid, timeout) needs PostgreSQL 14, so wait by hand.
+        admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+        for _ in range(1000):
+            if not admin.execute(
+                "SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)
+            ).fetchone():
+                return
+            time.sleep(0.01)
+        raise AssertionError(f"backend {pid} did not exit")
 
 
 class ConnectionKiller:

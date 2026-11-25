@@ -131,7 +131,12 @@ TABLES = [
 @pytest.fixture
 def conn():
     with psycopg.connect(DSN, autocommit=True) as c:
-        c.execute(SCHEMA_SQL)
+        schema = SCHEMA_SQL
+        if c.info.server_version < 120000:  # no generated columns before PostgreSQL 12
+            schema = schema.replace(
+                ",\n    upper_label text GENERATED ALWAYS AS (upper(label)) STORED", ""
+            )
+        c.execute(schema)
         c.execute("RESET search_path")
         yield c
         c.execute("DROP SCHEMA IF EXISTS idump_other CASCADE")

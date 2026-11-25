@@ -15,7 +15,11 @@ from .models import Catalog, Column, ExternalForeignKey, ForeignKey, Table
 
 log = logging.getLogger(__name__)
 
-MIN_SERVER_VERSION = 120000  # pg_attribute.attgenerated
+#: PostgreSQL 11: pg_constraint.conparentid, which marks the copies of a foreign
+#: key that partitions inherit from their partitioned table.
+MIN_SERVER_VERSION = 110000
+#: PostgreSQL 12 added generated columns (pg_attribute.attgenerated).
+GENERATED_COLUMNS_VERSION = 120000
 
 _TABLES_SQL = """
 SELECT c.oid::int8, n.nspname, c.relname, c.relkind
@@ -41,7 +45,7 @@ SELECT a.attrelid::int8,
        END,
        t.typcategory,
        a.attnotnull,
-       a.attgenerated <> '',
+       {generated},
        a.attidentity,
        pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname)
 FROM pg_catalog.pg_attribute a
@@ -120,15 +124,31 @@ class RelationInfo:
 
 
 def check_server_version(conn: psycopg.Connection[Any]) -> None:
-    """Fail unless the server is PostgreSQL 12 or newer.
+    """Fail unless the server is PostgreSQL 11 or newer.
 
     Args:
         conn: Open connection to the source database.
     """
     if conn.info.server_version < MIN_SERVER_VERSION:
         raise IntellidumpError(
-            f"PostgreSQL 12 or newer is required (server is {conn.info.server_version})"
+            f"PostgreSQL 11 or newer is required (server is {conn.info.server_version})"
         )
+
+
+def _columns_sql(conn: psycopg.Connection[Any]) -> str:
+    """The column query for this server.
+
+    Args:
+        conn: Open connection to the source database.
+
+    Returns:
+        _COLUMNS_SQL; before PostgreSQL 12, which has no generated columns, no
+        column counts as generated.
+    """
+    generated = (
+        "a.attgenerated <> ''" if conn.info.server_version >= GENERATED_COLUMNS_VERSION else "false"
+    )
+    return _COLUMNS_SQL.replace("{generated}", generated)
 
 
 def describe_relations(
@@ -199,7 +219,7 @@ def load_catalog(conn: psycopg.Connection[Any], schemas: Sequence[str]) -> Catal
 
         columns: dict[int, list[Column]] = defaultdict(list)
         if oids:
-            cur.execute(_COLUMNS_SQL, {"oids": oids})
+            cur.execute(_columns_sql(conn), {"oids": oids})
             for (
                 relid,
                 name,
